@@ -3,8 +3,11 @@
  * Creates a label unless one is passed via a variable, via count.
  */
 locals {
-  app_label                   = var.app_namespace ? "${var.app_namespace}-${var.app_name}-${var.app_env}" : "${var.app_name}-${var.app_env}"
+  # app_label= var.app_namespace ? "${var.app_namespace}-${var.app_name}-${var.app_env}" : "${var.app_name}-${var.app_env}"
+  app_label = "%{ if var.app_namespace != "" }${var.app_namespace}-${var.app_name}-${var.app_env}%{ else }${var.app_name}-${var.app_env}%{ endif }"
 }
+
+
 
 /*
  * Recieve a resource group.
@@ -25,13 +28,12 @@ data "azurerm_subscription" "current" {}
  */
  # AAD aks Backend App - For server component (kubernetes API) that provides user authentication.
 resource "azuread_application" "aks-aad-srv" {
-  name                       = "${local.app_label}-aks-srv"
+  display_name               = "${local.app_label}-aks-srv"
   homepage                   = "https://${local.app_label}-aks-srv"
   identifier_uris            = ["https://${local.app_label}-aks-srv"]
   reply_urls                 = ["https://${local.app_label}-aks-srv"]
   type                       = "webapp/api"
   group_membership_claims    = "All"
-  available_to_other_tenants = false
   oauth2_allow_implicit_flow = false
   required_resource_access {
     resource_app_id = "00000003-0000-0000-c000-000000000000"
@@ -76,10 +78,10 @@ resource "azuread_application_password" "aks-aad-srv" {
  * AAD AKS kubectl app - For kubectl CLI component that provides user authentication through CLI.
  */
 resource "azuread_application" "aks-aad-cli" {
-  name       = "${local.app_label}-aks-cli"
-  homepage   = "https://${local.app_label}-aks-cli"
-  reply_urls = ["https://${local.app_label}-aks-cli"]
-  type       = "native"
+  name         = "${local.app_label}-aks-cli"
+  homepage     = "https://${local.app_label}-aks-cli"
+  reply_urls   = ["https://${local.app_label}-aks-cli"]
+  type         = "native"
   required_resource_access {
     resource_app_id = azuread_application.aks-aad-srv.application_id
     resource_access {
@@ -99,7 +101,7 @@ resource "azuread_service_principal" "aks-aad-cli" {
  * Creates Azure AD group with access to this kubernetes cluster
  */
 resource "azuread_group" "aks-aad-clusteradmins" {
-  name = "${local.app_label}-aks-clusteradmins"
+  display_name = "${local.app_label}-aks-clusteradmins"
 }
 
 /*************************************************************
@@ -110,7 +112,6 @@ resource "azuread_application" "aks_sp" {
   homepage                   = "https://${local.app_label}"
   identifier_uris            = ["https://${local.app_label}"]
   reply_urls                 = ["https://${local.app_label}"]
-  available_to_other_tenants = false
   oauth2_allow_implicit_flow = false
 }
 
@@ -321,16 +322,16 @@ resource "kubernetes_cluster_role_binding" "service_account" {
   ]
 }
 
-/*
- * Configure AAD Pod Identity Capability
- * Enabling kubernetes/pods to interact with Azure.
- */
-module "aks-aad-pod-identity" {
-  # source              = "https://github.com/Wycliffe-USA/terraform-modules//azure/aks-aad-pod-identity?ref=1.0.0"
-  source   = "../aks-aad-pod-identity/"
+# /*
+#  * Configure AAD Pod Identity Capability
+#  * Enabling kubernetes/pods to interact with Azure.
+#  */
+# module "aks-aad-pod-identity" {
+#   # source              = "https://github.com/Wycliffe-USA/terraform-modules//azure/aks-aad-pod-identity?ref=1.0.0"
+#   source   = "../aks-aad-pod-identity/"
 
-  aks_name           = azurerm_kubernetes_cluster.aks.name
-  aks_resource_group = data.azurerm_resource_group.rg.name
-  # aks_cluster_ca_certificate = azurerm_kubernetes_cluster.aks.kube_admin_config.0.cluster_ca_certificate
-  # aks_cluster_auth_token     = azurerm_kubernetes_cluster.aks.kube_admin_config.0.password
-}
+#   aks_name           = azurerm_kubernetes_cluster.aks.name
+#   aks_resource_group = data.azurerm_resource_group.rg.name
+#   # aks_cluster_ca_certificate = azurerm_kubernetes_cluster.aks.kube_admin_config.0.cluster_ca_certificate
+#   # aks_cluster_auth_token     = azurerm_kubernetes_cluster.aks.kube_admin_config.0.password
+# }
