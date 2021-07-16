@@ -30,30 +30,18 @@ output "aks_cluster_name" {
   value = azurerm_kubernetes_cluster.aks.name
 }
 
+# output "user_assigned_identity_principal_id" {
+#   value = azurerm_user_assigned_identity.aks.principal_id
+# }
+
+output "aks_agic_user_assigned_identity" { #Object, containing client_id, object_id, user_assigned_identity_id.
+  value = azurerm_kubernetes_cluster.aks.addon_profile.0.ingress_application_gateway.0.ingress_application_gateway_identity.0
+}
+
 output "kube_config" {
   value = azurerm_kubernetes_cluster.aks.kube_config_raw
 }
 
 output "host" {
   value = azurerm_kubernetes_cluster.aks.kube_config.0.host
-}
-
-output "user_assigned_identity_id" {
-  value = azurerm_user_assigned_identity.aks_user_assigned_identity.id
-}
-
-output "user_assigned_identity_principal_id" {
-  value = azurerm_user_assigned_identity.aks_user_assigned_identity.principal_id
-}
-
-output "user_assigned_identity_client_id" {
-  value = azurerm_user_assigned_identity.aks_user_assigned_identity.client_id
-}
-
-output "azuread_service_principal_aks_sp_object_id" {
-  value = azuread_service_principal.aks_sp.object_id
-}
-
-output "oauth2" {
-  value = azuread_application.aks-aad-srv.oauth2_permissions
 }

@@ -1,160 +1,271 @@
-variable "app_namespace" {
-  type        = string
-  default     = ""
-  description = "Namespace, which could be your organization name or abbreviation, e.g. 'eg' or 'cp'"
-}
-
-variable "app_env" {
-  type        = string
-  default     = "prod"
-  description = "Environment, e.g. 'prod', 'staging', 'dev', 'test'"
-}
-
-variable "app_name" {
-  type        = string
-  description = "Name of this application. Alternatively, the primary name used in naming resources in this configuration."
-}
-
-variable "azure_client_id" {
-  type        = string
-  description = "Azure client ID for terraform access"
-}
-
-variable "azure_client_secret" {
-  type        = string
-  description = "Azure client secret for terraform access"
-}
-
-# variable "azure_subscription_id" {
-#   type        = string
-#   description = "Azure subscription id"
-# }
-
-# variable "azure_tenant_id" {
-#   type        = string
-#   description = "Azure tenant id"
-# }
-
-variable "azure_region" {
-  type        = string
-  description = "Azure Region"
-}
-
-variable "automate_admin_consent" {
-  type        = bool
-  default     = false
-  description = "If true passes az commands to the local interpreter to automate admin consent.  Otherwise do this manually during setup."
-}
-
-variable "aks_availability_zones" {
-  type        = list
-  default     = [1, 2, 3]
-  description = "A list of Availability Zones across which the Node Pool should be spread. Pass null for no preference."
-}
-
-variable "aks_enable_auto_scaling" {
-  type        = bool
-  default     = false
-  description = "Should the Kubernetes Auto Scaler be enabled for this Node Pool?"
-}
-
-variable "aks_dashboard_enabled" {
-  type        = bool
-  default     = false
-  description = "Enable the Kubernetes dashboard to run on the cluster."
-}
-
 variable "resource_group_name" {
-  description = "The resource group name to be imported"
+  description = "Resource group name."
+  type        = string
 }
 
-variable "aks_label_order" {
-  type = list(string)
-  default = ["namespace", "name", "component", "environment", "stage", "attributes"]
-  description = "label order for null-label label_default"
+variable "location" {
+  description = "Azure region."
+  type        = string
 }
 
-variable "aks_label_tags" {
+variable "names" {
+  description = "Names to be applied to resources."
+  type        = map(string)
+  default     = null
+}
+
+variable "node_resource_group_name" {
+  description = "Resource group name for nodes."
+  type        = string
+  default     = null
+}
+
+variable "tags" {
+  description = "Tags to be applied to resources."
+  type        = map(string)
+}
+
+variable "cluster_name" {
+  description = "Name of AKS cluster."
+  type        = string
+  default     = null # null value will create name based on app_name and app_env
+}
+
+variable "dns_prefix" {
+  description = "DNS prefix specified when creating the managed cluster."
+  type        = string
+  default     = null # null value will create name based on app_name and app_env.
+}
+
+variable "node_resource_group" {
+  description = "The name of the Resource Group where the Kubernetes Nodes should exist."
+  type        = string
+  default     = null
+}
+
+variable "sku_tier" {
+  description = "Sets the cluster's SKU tier. The paid tier has a financially-backed uptime SLA. Read doc [here](https://docs.microsoft.com/en-us/azure/aks/uptime-sla)."
+  type        = string
+  default     = "Free"
+
+  validation {
+    condition     = contains(["free", "paid"], lower(var.sku_tier))
+    error_message = "Available SKU Tiers are \"Free\" and \"Paid\"."
+  }
+}
+
+variable "kubernetes_version" {
+  description = "kubernetes version"
+  type        = string
+  default     = null # defaults to latest recommended version
+}
+
+variable "network_plugin" {
+  description = "network plugin to use for networking (azure or kubenet)"
+  type        = string
+  default     = "azure"
+
+  validation {
+    condition = (
+      var.network_plugin == "kubenet" ||
+      var.network_plugin == "azure"
+    )
+    error_message = "Network Plugin must set to kubenet or azure."
+
+  }
+}
+
+variable "outbound_type" {
+  description = "outbound (egress) routing method which should be used for this Kubernetes Cluster"
+  type        = string
+  default     = "loadBalancer"
+}
+
+variable "pod_cidr" {
+  description = "used for pod IP addresses"
+  type        = string
+  default     = null
+}
+
+variable "network_profile_options" {
+  description = "docker_bridge_cidr, dns_service_ip and service_cidr should all be empty or all should be set"
+  type = object({
+    docker_bridge_cidr = string
+    dns_service_ip     = string
+    service_cidr       = string
+  })
+  default = null
+
+  validation {
+    condition = (
+      ((var.network_profile_options == null) ? true :
+        ((var.network_profile_options.docker_bridge_cidr != null) &&
+          (var.network_profile_options.dns_service_ip != null) &&
+      (var.network_profile_options.service_cidr != null)))
+    )
+    error_message = "Incorrect values set. docker_bridge_cidr, dns_service_ip and service_cidr should all be empty or all should be set."
+
+  }
+}
+
+variable "node_pools" {
+  description = "node pools"
+  type        = any # top level keys are node pool names, sub-keys are subset of node_pool_defaults keys
+  default     = { default = {} }
+}
+
+variable "node_pool_defaults" {
+  description = "node pool defaults"
+  type = object({
+    vm_size                      = string
+    availability_zones           = list(number)
+    node_count                   = number
+    enable_auto_scaling          = bool
+    min_count                    = number
+    max_count                    = number
+    enable_host_encryption       = bool
+    enable_node_public_ip        = bool
+    max_pods                     = number
+    node_labels                  = map(string)
+    only_critical_addons_enabled = bool
+    orchestrator_version         = string
+    os_disk_size_gb              = number
+    os_disk_type                 = string
+    type                         = string
+    tags                         = map(string)
+    subnet                       = string # must be key from node_pool_subnets variable
+
+    # settings below not available in default node pools
+    mode                         = string
+    node_taints                  = list(string)
+    max_surge                    = string
+    eviction_policy              = string
+    os_type                      = string
+    priority                     = string
+    proximity_placement_group_id = string
+    spot_max_price               = number
+  })
+  default = { name = null
+    vm_size                      = "Standard_B2s"
+    availability_zones           = [1, 2, 3]
+    node_count                   = 3
+    enable_auto_scaling          = false
+    min_count                    = 1
+    max_count                    = 4
+    enable_host_encryption       = false
+    enable_node_public_ip        = false
+    max_pods                     = 249
+    node_labels                  = null
+    only_critical_addons_enabled = false
+    orchestrator_version         = null
+    os_disk_size_gb              = null
+    os_disk_type                 = "Managed"
+    type                         = "VirtualMachineScaleSets"
+    tags                         = null
+    subnet                       = null # must be a key from node_pool_subnets variable
+
+    # settings below not available in default node pools
+    mode                         = "System"
+    node_taints                  = null
+    max_surge                    = "1"
+    eviction_policy              = null
+    os_type                      = "Linux"
+    priority                     = "Regular"
+    proximity_placement_group_id = null
+    spot_max_price               = null
+  }
+}
+
+variable "default_node_pool" {
+  description = "Default node pool.  Value refers to key within node_pools variable."
+  type        = string
+  default     = "default"
+}
+
+variable "virtual_network" {
+  description = "Virtual network info."
+  type = object({
+    subnets = map(object({
+      id = string
+    }))
+    route_table_id = string
+  })
+  default = null
+}
+
+variable "configure_network_role" {
+  description = "Add Network Contributor role for identity on input subnets."
+  type        = bool
+  default     = true
+}
+
+variable "windows_profile" {
+  description = "windows profile admin user/pass"
+  type = object({
+    admin_username = string
+    admin_password = string
+  })
+  default = null
+
+  validation {
+    condition = (
+      var.windows_profile == null ? true :
+      ((var.windows_profile.admin_username != null) &&
+        (var.windows_profile.admin_username != "") &&
+        (var.windows_profile.admin_password != null) &&
+      (var.windows_profile.admin_password != ""))
+    )
+    error_message = "Windows profile requires both admin_username and admin_password."
+  }
+}
+
+variable "rbac" {
+  description = "role based access control settings"
+  type = object({
+    enabled        = bool
+    ad_integration = bool
+  })
+  default = {
+    enabled        = true
+    ad_integration = true
+  }
+
+  validation {
+    condition = (
+      (var.rbac.enabled && var.rbac.ad_integration) ||
+      (var.rbac.enabled && var.rbac.ad_integration == false) ||
+      (var.rbac.enabled == false && var.rbac.ad_integration == false)
+    )
+    error_message = "Role based access control must be enabled to use Active Directory integration."
+  }
+}
+
+variable "rbac_admin_object_ids" {
+  description = "Admin group object ids for use with rbac active directory integration"
+  type        = map(string) # keys are only for documentation purposes
+  default     = {}
+}
+
+variable "enable_kube_dashboard" {
+  description = "enable kubernetes dashboard"
+  type        = bool
+  default     = false
+}
+
+variable "acr_pull_access" {
+  description = "map of ACR ids to allow AcrPull"
   type        = map(string)
   default     = {}
 }
 
-variable "aks_dns_service_ip" {
+variable "log_analytics_workspace_id" {
+  description = "ID of the Azure Log Analytics Workspace"
   type        = string
-  default     = "10.11.4.2"
-  description = "IP address within the Kubernetes service address range that will be used by cluster service discovery"
+  default     = null
 }
 
-variable "aks_docker_bridge_cidr" {
-  type         = string
-  default     = "10.11.0.1/26"
-  description = "Docker0 subnet on hosts. Rarely used by docker service/pods, except for during docker build commands."
-}
-
-variable "aks_service_cidr" {
+variable "ingress_application_gateway_id" {
+  description = "Identity of the application gateway used for cluster ingress."
   type        = string
-  default     = "10.11.4.0/22"
-  description = "This is the set of virtual IPs that Kubernetes assigns to internal services in your cluster. https://docs.microsoft.com/en-us/azure/aks/configure-azure-cni"
-}
-
-variable "aks_load_balancer_sku" {
-  type    = string
-  default = "Standard"
-}
-
-variable "aks_load_balancer_profile" {
-  type    = string
-  default = null
-}
-
-variable "aks_max_pods" {
-  type    = string
-  default = 110
-}
-
-variable "aks_network_plugin" {
-  type    = string
-  default = "azure"
-}
-
-variable "aks_network_policy" {
-  type    = string
-  default = "azure"
-}
-
-variable "aks_node_count" {
-  type    = string
-  default = "3"
-}
-
-variable "aks_node_count_min" {
-  type    = string
-  default = null
-}
-
-variable "aks_node_count_max" {
-  type    = string
-  default = null
-}
-
-variable "aks_outbound_type" {
-  type    = string
-  default = "loadBalancer"
-}
-
-variable "aks_pod_cidr" {
-  type    = string
-  default = null
-}
-
-variable "aks_vm_size" {
-  type        = string
-  default     = "Standard_D2s_v3"
-  description = "Azure VM size."
-}
-
-variable "aks_vnet_subnet_id" {
-  type         = string
-  default      = null
-  description = "The ID of a Subnet where the Kubernetes Node Pool should exist. Changing this forces a new resource to be created."
+  default     = null
 }

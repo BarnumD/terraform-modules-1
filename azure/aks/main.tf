@@ -1,337 +1,173 @@
 /*
- * Configure a default label to use on resources.
- * Creates a label unless one is passed via a variable, via count.
- */
-locals {
-  # app_label= var.app_namespace ? "${var.app_namespace}-${var.app_name}-${var.app_env}" : "${var.app_name}-${var.app_env}"
-  app_label = "%{ if var.app_namespace != "" }${var.app_namespace}-${var.app_name}-${var.app_env}%{ else }${var.app_name}-${var.app_env}%{ endif }"
-}
-
-
-
-/*
- * Recieve a resource group.
- */
-data "azurerm_resource_group" "rg" {
-  name = var.resource_group_name
-}
-
-
-/*
- * Obtain environment data
- */
-data "azurerm_subscription" "current" {}
-
-
-/*************************************************************
- * Configure Azure AD application components to allow AD based login to Kubernetes cluster 
- */
- # AAD aks Backend App - For server component (kubernetes API) that provides user authentication.
-resource "azuread_application" "aks-aad-srv" {
-  display_name               = "${local.app_label}-aks-srv"
-  homepage                   = "https://${local.app_label}-aks-srv"
-  identifier_uris            = ["https://${local.app_label}-aks-srv"]
-  reply_urls                 = ["https://${local.app_label}-aks-srv"]
-  type                       = "webapp/api"
-  group_membership_claims    = "All"
-  oauth2_allow_implicit_flow = false
-  required_resource_access {
-    resource_app_id = "00000003-0000-0000-c000-000000000000"
-    resource_access {
-      id   = "7ab1d382-f21e-4acd-a863-ba3e13f7da61"
-      type = "Role"
-    }
-    resource_access {
-      id   = "06da0dbc-49e2-44d2-8312-53f166ab848a"
-      type = "Scope"
-    }
-    resource_access {
-      id   = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"
-      type = "Scope"
-    }
-  }
-  required_resource_access {
-    resource_app_id = "00000002-0000-0000-c000-000000000000"
-    resource_access {
-      id   = "311a71cc-e848-46a1-bdf8-97ff7156d8e6"
-      type = "Scope"
-    }
-  }
-}
-
-resource "azuread_service_principal" "aks-aad-srv" {
-  application_id = azuread_application.aks-aad-srv.application_id
-}
-
-resource "random_password" "aks-aad-srv" {
-  length  = 32
-  special = true
-}
-
-resource "azuread_application_password" "aks-aad-srv" {
-  application_object_id = azuread_application.aks-aad-srv.object_id
-  value                 = random_password.aks-aad-srv.result
-  end_date_relative     = "87600h" #10Yrs
-}
-
-/*************************************************************
- * AAD AKS kubectl app - For kubectl CLI component that provides user authentication through CLI.
- */
-resource "azuread_application" "aks-aad-cli" {
-  name         = "${local.app_label}-aks-cli"
-  homepage     = "https://${local.app_label}-aks-cli"
-  reply_urls   = ["https://${local.app_label}-aks-cli"]
-  type         = "native"
-  required_resource_access {
-    resource_app_id = azuread_application.aks-aad-srv.application_id
-    resource_access {
-      # id   = azuread_application.aks-aad-srv.oauth2_permissions.0.id
-      # id   = [for permission in azuread_application.aks-aad-srv.oauth2_permissions : permission.id][0]
-      id = "2aacec3e-e7ad-40e0-b563-e7bff4a283c1"
-      type = "Scope"
-    }
-  }
-}
-
-resource "azuread_service_principal" "aks-aad-cli" {
-  application_id = azuread_application.aks-aad-cli.application_id
-}
-
-/*************************************************************
- * Creates Azure AD group with access to this kubernetes cluster
- */
-resource "azuread_group" "aks-aad-clusteradmins" {
-  display_name = "${local.app_label}-aks-clusteradmins"
-}
-
-/*************************************************************
- * Creates a service principal application that Kubernetes uses to interact with Azure.
- */
-resource "azuread_application" "aks_sp" {
-  name                       = local.app_label
-  homepage                   = "https://${local.app_label}"
-  identifier_uris            = ["https://${local.app_label}"]
-  reply_urls                 = ["https://${local.app_label}"]
-  oauth2_allow_implicit_flow = false
-}
-
-resource "azuread_service_principal" "aks_sp" {
-  application_id = azuread_application.aks_sp.application_id
-}
-
-resource "random_password" "aks_sp_pwd" {
-  length  = 32
-  special = true
-}
-
-resource "azuread_service_principal_password" "aks_sp_pwd" {
-  service_principal_id = azuread_service_principal.aks_sp.id
-  value                = random_password.aks_sp_pwd.result
-  end_date_relative     = "87600h" #10Yrs
-}
-
-resource "azurerm_role_assignment" "subscription_to_aks_sp_contributor" {
-  scope                = data.azurerm_subscription.current.id
-  role_definition_name = "Contributor"
-  principal_id         = azuread_service_principal.aks_sp.id
-
-  depends_on = [
-    azuread_service_principal_password.aks_sp_pwd
-  ]
-}
-
-/*
  * Azure User Assigned Identity; Used to help manage resources such as Application gateway via Kubernetes.
  */
-resource "azurerm_user_assigned_identity" "aks_user_assigned_identity" {
-  resource_group_name = data.azurerm_resource_group.rg.name
-  location            = data.azurerm_resource_group.rg.location
-
-  name = "${local.app_label}-identity"
-}
-
-//Give this managed identity 'Operator' role on our service pricipal.
-resource "azurerm_role_assignment" "aks_sp_to_aks_uai_managed_identity_operator" {
-  scope                = azurerm_user_assigned_identity.aks_user_assigned_identity.id
-  role_definition_name = "Managed Identity Operator"
-  principal_id         = azuread_service_principal.aks_sp.object_id
-  depends_on           = [azuread_service_principal.aks_sp, azurerm_user_assigned_identity.aks_user_assigned_identity]
+resource "azurerm_user_assigned_identity" "aks" {
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  name                = "${local.cluster_name}-uai"
 }
 
 /*
- * Give admin consent to the application
+ * Grant AKS rights to make changes in subnets assigned to it.
  */
- # Before giving consent, wait. Sometimes Azure returns a 200, but not all services have access to the newly created applications/services.
+resource "azurerm_role_assignment" "subnet_network_contributor" {
+  for_each = (var.virtual_network == null ? {} : (var.configure_network_role ? var.virtual_network.subnets : {}))
 
-resource "null_resource" "delay_before_consent" {
-  count = var.automate_admin_consent ? 1 : 0
-
-  provisioner "local-exec" {
-    command = "sleep 60"
-  }
-  depends_on = [
-    azuread_service_principal.aks-aad-srv,
-    azuread_service_principal.aks-aad-cli
-  ]
+  scope                = each.value.id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_user_assigned_identity.aks.principal_id
 }
 
-# Give admin consent - SP/az login user must be AAD admin
-# Only if automate_admin_consent is set to true.
+resource "azurerm_role_assignment" "route_table_network_contributor" {
+  count = (var.virtual_network == null ? 0 : 1)
 
-resource "null_resource" "grant_srv_admin_constent" {
-  count = var.automate_admin_consent ? 1 : 0
-
-  provisioner "local-exec" {
-    command = "az ad app permission admin-consent --id ${azuread_application.aks-aad-srv.application_id}"
-  }
-  depends_on = [
-    null_resource.delay_before_consent
-  ]
-}
-resource "null_resource" "grant_client_admin_constent" {
-  count = var.automate_admin_consent ? 1 : 0
-
-  provisioner "local-exec" {
-    command = "az ad app permission admin-consent --id ${azuread_application.aks-aad-cli.application_id}"
-  }
-  depends_on = [
-    null_resource.delay_before_consent
-  ]
-}
-resource "null_resource" "delay" {
-  count = var.automate_admin_consent ? 1 : 0
-
-  provisioner "local-exec" {
-    command = "sleep 60"
-  }
-  depends_on = [
-    null_resource.grant_srv_admin_constent,
-    null_resource.grant_client_admin_constent
-  ]
+  scope                = var.virtual_network.route_table_id
+  role_definition_name = "Network Contributor"
+  principal_id = azurerm_user_assigned_identity.aks.principal_id
 }
 
-/*
- * Kubernetes cluster creation
- */
- resource "azurerm_kubernetes_cluster" "aks" {
-  name                = local.app_label
-  location            = var.azure_region
-  resource_group_name = data.azurerm_resource_group.rg.name
-  dns_prefix          = local.app_label
+resource "azurerm_kubernetes_cluster" "aks" {
+  depends_on = [azurerm_role_assignment.route_table_network_contributor]
+
+  name                = local.cluster_name
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  tags                = var.tags
+
+  sku_tier            = var.sku_tier
+  kubernetes_version  = var.kubernetes_version
+  node_resource_group = local.node_resource_group_name
+  dns_prefix          = local.dns_prefix
 
   network_profile {
-    network_plugin        = var.aks_network_plugin
-    network_policy        = var.aks_network_policy
-    dns_service_ip        = var.aks_dns_service_ip
-    docker_bridge_cidr    = var.aks_docker_bridge_cidr
-    # outbound_type         = var.aks_outbound_type
-    pod_cidr              = var.aks_pod_cidr
-    service_cidr          = var.aks_service_cidr
-    # load_balancer_profile = var.aks_load_balancer_profile
-    load_balancer_sku     = var.aks_load_balancer_sku
+    network_plugin     = var.network_plugin
+    dns_service_ip     = (var.network_profile_options == null ? null : var.network_profile_options.dns_service_ip)
+    docker_bridge_cidr = (var.network_profile_options == null ? null : var.network_profile_options.docker_bridge_cidr)
+    service_cidr       = (var.network_profile_options == null ? null : var.network_profile_options.service_cidr)
+    outbound_type      = var.outbound_type
+    pod_cidr           = (var.network_plugin == "kubenet" ? var.pod_cidr : null)
   }
 
   default_node_pool {
-    name                = "default"
-    type                = "VirtualMachineScaleSets"
-    node_count          = var.aks_node_count
-    max_count           = var.aks_node_count_max
-    min_count           = var.aks_node_count_min
-    vm_size             = var.aks_vm_size
-    os_disk_size_gb     = 30
-    max_pods            = var.aks_max_pods
-    vnet_subnet_id      = var.aks_vnet_subnet_id
-    availability_zones  = var.aks_availability_zones
-    enable_auto_scaling = var.aks_enable_auto_scaling
-  }
+    name                         = var.default_node_pool
+    vm_size                      = local.node_pools[var.default_node_pool].vm_size
+    os_disk_size_gb              = local.node_pools[var.default_node_pool].os_disk_size_gb
+    os_disk_type                 = local.node_pools[var.default_node_pool].os_disk_type
+    availability_zones           = local.node_pools[var.default_node_pool].availability_zones
+    enable_auto_scaling          = local.node_pools[var.default_node_pool].enable_auto_scaling
+    node_count                   = (local.node_pools[var.default_node_pool].enable_auto_scaling ? null : local.node_pools[var.default_node_pool].node_count)
+    min_count                    = (local.node_pools[var.default_node_pool].enable_auto_scaling ? local.node_pools[var.default_node_pool].min_count : null)
+    max_count                    = (local.node_pools[var.default_node_pool].enable_auto_scaling ? local.node_pools[var.default_node_pool].max_count : null)
+    enable_host_encryption       = local.node_pools[var.default_node_pool].enable_host_encryption
+    enable_node_public_ip        = local.node_pools[var.default_node_pool].enable_node_public_ip
+    type                         = local.node_pools[var.default_node_pool].type
+    only_critical_addons_enabled = local.node_pools[var.default_node_pool].only_critical_addons_enabled
+    orchestrator_version         = local.node_pools[var.default_node_pool].orchestrator_version
+    max_pods                     = local.node_pools[var.default_node_pool].max_pods
+    node_labels                  = local.node_pools[var.default_node_pool].node_labels
+    tags                         = local.node_pools[var.default_node_pool].tags
+    vnet_subnet_id               = (local.node_pools[var.default_node_pool].subnet != null ? var.virtual_network.subnets[local.node_pools[var.default_node_pool].subnet].id : null)
 
-  service_principal {
-    client_id     = azuread_application.aks_sp.application_id
-    client_secret = random_password.aks_sp_pwd.result
-  }
-
-  role_based_access_control {
-    azure_active_directory {
-      client_app_id     = azuread_application.aks-aad-cli.application_id
-      server_app_id     = azuread_application.aks-aad-srv.application_id
-      server_app_secret = random_password.aks-aad-srv.result
-      tenant_id         = data.azurerm_subscription.current.tenant_id
+    upgrade_settings {
+      max_surge = local.node_pools[var.default_node_pool].max_surge
     }
-    enabled = true
   }
 
   addon_profile {
+    aci_connector_linux {
+      enabled = false
+    }
+    azure_policy {
+      enabled = false
+    }
+    http_application_routing {
+      enabled = false
+    }
     kube_dashboard {
-      enabled = var.aks_dashboard_enabled
+      enabled = false
+    }
+    ingress_application_gateway {
+      enabled = var.ingress_application_gateway_id != null ? true : false
+      gateway_id = var.ingress_application_gateway_id != null ? var.ingress_application_gateway_id : null
+    }
+    oms_agent {
+      enabled = var.log_analytics_workspace_id != null ? true : false
+      log_analytics_workspace_id = var.log_analytics_workspace_id != null ? var.log_analytics_workspace_id : null
     }
   }
 
-  lifecycle {
-    ignore_changes = [
-      tags["Name"],
-    ]
+  dynamic "windows_profile" {
+    for_each = local.windows_nodes ? [1] : []
+    content {
+      admin_username = var.windows_profile.admin_username
+      admin_password = var.windows_profile.admin_password
+    }
   }
 
-  tags = var.aks_label_tags
-  depends_on = [
-    azurerm_role_assignment.aks_sp_to_aks_uai_managed_identity_operator,
-    azuread_service_principal_password.aks_sp_pwd
-  ]
+  identity {
+    type = "UserAssigned"
+    user_assigned_identity_id = azurerm_user_assigned_identity.aks.id
+  }
+
+  role_based_access_control {
+    enabled = var.rbac.enabled
+    dynamic "azure_active_directory" {
+      for_each = (var.rbac.ad_integration ? [1] : [])
+      content {
+        managed                = true
+        admin_group_object_ids = values(var.rbac_admin_object_ids)
+      }
+    }
+  }
 }
 
-/*
- * Assign Azure AD group admin access to Kubernetes with RBAC. 
- */
-resource "kubernetes_cluster_role_binding" "cluster_admin" {
-  //Gives AD group member access to log into dashboard.
-  metadata {
-    name = "${local.app_label}-admins"
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "cluster-admin"
-  }
-  subject {
-    kind      = "Group"
-    api_group = "rbac.authorization.k8s.io"
-    name      = azuread_group.aks-aad-clusteradmins.id
-  }
-  depends_on = [
-    azurerm_kubernetes_cluster.aks
-  ]
+resource "azurerm_role_assignment" "rbac_admin" {
+  for_each             = (var.rbac.ad_integration ? var.rbac_admin_object_ids : {})
+  scope                = azurerm_kubernetes_cluster.aks.id
+  role_definition_name = "Azure Kubernetes Service Cluster User Role"
+  principal_id         = each.value
 }
 
-resource "kubernetes_cluster_role_binding" "service_account" {
-  //Give service account access to dashboard.
-  metadata {
-    name = "${local.app_label}-service-account"
+resource "azurerm_kubernetes_cluster_node_pool" "additional" {
+  for_each = local.additional_node_pools
+
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.aks.id
+
+  name                   = each.key
+  vm_size                = each.value.vm_size
+  os_disk_size_gb        = each.value.os_disk_size_gb
+  os_disk_type           = each.value.os_disk_type
+  availability_zones     = each.value.availability_zones
+  enable_auto_scaling    = each.value.enable_auto_scaling
+  node_count             = (each.value.enable_auto_scaling ? null : each.value.node_count)
+  min_count              = (each.value.enable_auto_scaling ? each.value.min_count : null)
+  max_count              = (each.value.enable_auto_scaling ? each.value.max_count : null)
+  os_type                = each.value.os_type
+  enable_host_encryption = each.value.enable_host_encryption
+  enable_node_public_ip  = each.value.enable_node_public_ip
+  max_pods               = each.value.max_pods
+  node_labels            = each.value.node_labels
+  orchestrator_version   = each.value.orchestrator_version
+  tags                   = each.value.tags
+  vnet_subnet_id = (each.value.subnet != null ?
+  var.virtual_network.subnets[each.value.subnet].id : null)
+
+  node_taints                  = each.value.node_taints
+  eviction_policy              = each.value.eviction_policy
+  proximity_placement_group_id = each.value.proximity_placement_group_id
+  spot_max_price               = each.value.spot_max_price
+  priority                     = each.value.priority
+  mode                         = each.value.mode
+
+  upgrade_settings {
+    max_surge = each.value.max_surge
   }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "cluster-admin"
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = "kubernetes-dashboard"
-    namespace = "kube-system"
-  }
-  depends_on = [
-    azurerm_kubernetes_cluster.aks
-  ]
 }
 
-# /*
-#  * Configure AAD Pod Identity Capability
-#  * Enabling kubernetes/pods to interact with Azure.
-#  */
-# module "aks-aad-pod-identity" {
-#   # source              = "https://github.com/Wycliffe-USA/terraform-modules//azure/aks-aad-pod-identity?ref=1.0.0"
-#   source   = "../aks-aad-pod-identity/"
-
-#   aks_name           = azurerm_kubernetes_cluster.aks.name
-#   aks_resource_group = data.azurerm_resource_group.rg.name
-#   # aks_cluster_ca_certificate = azurerm_kubernetes_cluster.aks.kube_admin_config.0.cluster_ca_certificate
-#   # aks_cluster_auth_token     = azurerm_kubernetes_cluster.aks.kube_admin_config.0.password
-# }
+resource "azurerm_role_assignment" "acr_pull" {
+  for_each                         = var.acr_pull_access
+  scope                            = each.value
+  role_definition_name             = "AcrPull"
+  principal_id                     = azurerm_kubernetes_cluster.aks.kubelet_identity.0.object_id
+  skip_service_principal_aad_check = true
+}
